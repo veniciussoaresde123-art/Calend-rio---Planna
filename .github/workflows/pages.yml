@@ -43,6 +43,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Compilar Planna
         run: pnpm build
+        env:
+          VITE_SUPABASE_URL: https://xwlkwyiybwkpdsflkvtp.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_LvCJrbNLMeA66xPXUd-82A_-upT2lE6
       - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
       - name: Preparar o site
