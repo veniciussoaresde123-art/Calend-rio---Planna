@@ -15,7 +15,7 @@ Agenda pessoal mobile-first para a Anna. A Fase 1 inclui autenticação pelo Sup
 3. Instale as dependências com `pnpm install`.
 4. Inicie em desenvolvimento com `pnpm dev` e abra o endereço local exibido.
 
-O schema inicial foi aplicado ao projeto Supabase conectado e está versionado em `supabase/migrations/20261125000100_create_events.sql`. Se precisar recriar outro banco, aplique essa migration pelo Supabase CLI ou pelo SQL Editor.
+O schema inicial foi aplicado ao projeto Supabase conectado e está versionado em `supabase/migrations/20261126000046_create_events.sql`. Se precisar recriar outro banco, aplique essa migration pelo Supabase CLI ou pelo SQL Editor.
 
 ## Configuração do Supabase Auth
 
