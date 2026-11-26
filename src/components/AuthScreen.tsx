@@ -33,7 +33,16 @@ export default function AuthScreen({ configured }: Props) {
         if (authError) throw authError
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Não foi possível entrar. Tente novamente.')
+      const authMessage = cause instanceof Error ? cause.message : ''
+      if (/invalid login credentials/i.test(authMessage)) {
+        setError('E-mail ou senha incorretos. Se ainda não criou sua conta, toque em “Criar conta”.')
+      } else if (/email not confirmed/i.test(authMessage)) {
+        setError('Confirme seu e-mail pelo link que enviamos antes de entrar.')
+      } else if (/user already registered/i.test(authMessage)) {
+        setError('Este e-mail já tem uma conta. Toque em “Fazer login” e entre com sua senha.')
+      } else {
+        setError(authMessage || 'Não foi possível entrar. Tente novamente.')
+      }
     } finally {
       setLoading(false)
     }
@@ -76,4 +85,3 @@ export default function AuthScreen({ configured }: Props) {
     </main>
   )
 }
-
