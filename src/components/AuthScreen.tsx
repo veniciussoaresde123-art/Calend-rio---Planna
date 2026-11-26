@@ -50,7 +50,8 @@ export default function AuthScreen({ configured }: Props) {
 
   const google = async () => {
     if (!supabase) return
-    const { error: authError } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } })
+    const redirectTo = new URL(import.meta.env.BASE_URL, window.location.origin).toString()
+    const { error: authError } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } })
     if (authError) setError(authError.message)
   }
 
@@ -85,3 +86,4 @@ export default function AuthScreen({ configured }: Props) {
     </main>
   )
 }
+
