@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { CalendarDays, CalendarHeart, Check, ChevronDown, CircleUserRound, Clock3, LogOut, Plus, Sparkles, Trash2 } from 'lucide-react'
 import AuthScreen from './components/AuthScreen'
 import EventDialog from './components/EventDialog'
@@ -21,7 +21,11 @@ export default function App() {
   useEffect(() => {
     if (!supabase) { setAuthReady(true); return }
     supabase.auth.getSession().then(({ data }) => { setUser(data.session?.user ? { id: data.session.user.id, email: data.session.user.email } : null); setAuthReady(true) })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ? { id: session.user.id, email: session.user.email } : null))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      const nextUser = session?.user ? { id: session.user.id, email: session.user.email } : null
+      setUser(nextUser)
+      if (!nextUser) setEvents([])
+    })
     return () => subscription.unsubscribe()
   }, [])
 
@@ -37,12 +41,9 @@ export default function App() {
 
   useEffect(() => { void loadEvents() }, [loadEvents])
 
-  const name = useMemo(() => {
-    const part = user?.email?.split('@')[0]?.split(/[._-]/)[0]
-    return part ? part.charAt(0).toLocaleUpperCase('pt-BR') + part.slice(1) : 'Anna'
-  }, [user?.email])
+  const name = 'Anna'
   const today = events.filter((event) => isTodayInBahia(event.starts_at))
-  const upcoming = events.filter((event) => !isTodayInBahia(event.starts_at) && !event.is_completed).slice(0, 3)
+  const upcoming = events.filter((event) => new Date(event.starts_at).getTime() > Date.now() && !event.is_completed).slice(0, 3)
   const openNew = () => { setEditing(null); setDialogOpen(true) }
 
   const saveEvent = async (input: EventInput) => {
@@ -74,10 +75,13 @@ export default function App() {
   if (!authReady) return <div className="boot-screen"><div className="brand"><span className="brand-mark"><CalendarHeart size={20} /></span> planna</div><span className="boot-dots">Preparando seu cantinho…</span></div>
   if (!user) return <AuthScreen configured={isSupabaseConfigured} />
 
-  const dateHeading = formatBahiaDate(new Date().toISOString(), { weekday: 'long', day: 'numeric', month: 'long' })
+  const now = new Date().toISOString()
+  const dateHeading = formatBahiaDate(now, { weekday: 'long', day: 'numeric', month: 'long' })
+  const hour = Number(formatBahiaDate(now, { hour: '2-digit', hourCycle: 'h23' }))
+  const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite'
 
   return <div className="app-shell"><header className="topbar"><a className="brand" href="#inicio" aria-label="Planna, início"><span className="brand-mark"><CalendarHeart size={19} /></span> planna</a><div className="topbar-right"><button className="user-pill" type="button" title={user.email}><span className="user-avatar">{name.charAt(0)}</span><span>{name}</span><ChevronDown size={14} /></button><button className="icon-button logout-button" type="button" aria-label="Sair da conta" title="Sair" onClick={() => void supabase?.auth.signOut()}><LogOut size={17} /></button></div></header>
-    <main className="dashboard" id="inicio"><div className="welcome-row"><div><span className="date-overline">{dateHeading}</span><h1>Bom dia, {name}<span className="wave"> ✿</span></h1><p>Vamos deixar seu dia mais leve?</p></div><div className="welcome-sparkle"><Sparkles size={19} /></div></div>
+    <main className="dashboard" id="inicio"><div className="welcome-row"><div><span className="date-overline">{dateHeading}</span><h1>{greeting}, {name}<span className="wave"> ✿</span></h1><p>Vamos deixar seu dia mais leve?</p></div><div className="welcome-sparkle"><Sparkles size={19} /></div></div>
       <section className="day-card"><div className="day-card-head"><div><span className="section-kicker">SUA AGENDA</span><h2>Hoje, com carinho</h2></div><span className="today-count">{today.length} {today.length === 1 ? 'lembrete' : 'lembretes'}</span></div>
         {loadingEvents ? <div className="empty-state"><div className="loading-spinner" />Carregando sua agenda…</div> : loadError ? <div className="notice error-notice">Não foi possível carregar seus compromissos: {loadError}<button className="text-button strong-link" onClick={() => void loadEvents()}>Tentar de novo</button></div> : today.length ? <div className="event-list">{today.map((event) => <EventRow key={event.id} event={event} onToggle={() => void toggleComplete(event)} onEdit={() => { setEditing(event); setDialogOpen(true) }} onDelete={() => void deleteEvent(event)} />)}</div> : <div className="empty-state"><div className="empty-illustration"><CalendarDays size={26} /><span>✿</span></div><strong>Seu dia está com espaço para respirar</strong><span>Nenhum compromisso por aqui. Quer adicionar algo?</span><button className="soft-button" onClick={openNew}><Plus size={16} />Adicionar lembrete</button></div>}
         <button className="add-event-button" onClick={openNew}><span className="add-circle"><Plus size={20} /></span><span><strong>Adicionar compromisso</strong><small>Uma ideia, um plano, um lembrete</small></span><span className="add-arrow">→</span></button>
