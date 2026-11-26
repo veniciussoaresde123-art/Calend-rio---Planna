@@ -77,7 +77,7 @@ export default function AuthScreen({ configured }: Props) {
             <button className="primary-button auth-submit" type="submit" disabled={loading || !configured}>{loading ? 'Só um instante…' : mode === 'signup' ? 'Criar minha conta' : mode === 'reset' ? 'Enviar link' : 'Entrar na minha agenda'}<ArrowRight size={17} /></button>
           </form>
           {mode !== 'reset' && <><div className="divider"><span>ou continue com</span></div><button className="google-button" type="button" onClick={google} disabled={!configured}><span className="google-g">G</span>Google</button></>}
-          <p className="switch-mode">{mode === 'login' ? 'Ainda não tem uma conta?' : mode === 'reset' ? 'Lembrou a senha?' : 'Já tem uma conta?'} <button type="button" className="text-button strong-link" onClick={() => { setMode(mode === 'signup' ? 'login' : 'login'); setError(''); setMessage('') }}>{mode === 'login' ? 'Criar conta' : 'Fazer login'}</button></p>
+          <p className="switch-mode">{mode === 'login' ? 'Ainda não tem uma conta?' : mode === 'reset' ? 'Lembrou a senha?' : 'Já tem uma conta?'} <button type="button" className="text-button strong-link" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setMessage('') }}>{mode === 'login' ? 'Criar conta' : 'Fazer login'}</button></p>
           <div className="privacy-note"><span className="privacy-dot" /><span>Seus compromissos ficam protegidos e só você pode vê-los.</span></div>
         </div>
         <footer className="auth-footer">um lembrete gentil de que você está indo bem <Heart size={12} fill="currentColor" /></footer>
