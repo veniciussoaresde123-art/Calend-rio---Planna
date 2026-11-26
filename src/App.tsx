@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { CalendarDays, CalendarHeart, Check, ChevronDown, CircleUserRound, Clock3, LogOut, Plus, Sparkles, Trash2 } from 'lucide-react'
 import AuthScreen from './components/AuthScreen'
 import EventDialog from './components/EventDialog'
@@ -9,7 +9,7 @@ import type { CalendarEvent, EventInput } from './types'
 const categoryLabels: Record<string, string> = { pessoal: 'Pessoal', trabalho: 'Trabalho', saude: 'Saúde', estudos: 'Estudos', compromissos: 'Compromissos' }
 
 export default function App() {
-  const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
+  const [user, setUser] = useState<{ id: string; email?: string; fullName?: string } | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [loadingEvents, setLoadingEvents] = useState(false)
@@ -17,12 +17,16 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<CalendarEvent | null>(null)
   const [toast, setToast] = useState('')
+  const [nameInput, setNameInput] = useState('')
+  const [nameSaving, setNameSaving] = useState(false)
+  const [nameError, setNameError] = useState('')
 
   useEffect(() => {
     if (!supabase) { setAuthReady(true); return }
-    supabase.auth.getSession().then(({ data }) => { setUser(data.session?.user ? { id: data.session.user.id, email: data.session.user.email } : null); setAuthReady(true) })
+    supabase.auth.getSession().then(({ data }) => { const authUser = data.session?.user; setUser(authUser ? { id: authUser.id, email: authUser.email, fullName: typeof authUser.user_metadata?.full_name === 'string' ? authUser.user_metadata.full_name : undefined } : null); setAuthReady(true) })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      const nextUser = session?.user ? { id: session.user.id, email: session.user.email } : null
+      const authUser = session?.user
+      const nextUser = authUser ? { id: authUser.id, email: authUser.email, fullName: typeof authUser.user_metadata?.full_name === 'string' ? authUser.user_metadata.full_name : undefined } : null
       setUser(nextUser)
       if (!nextUser) setEvents([])
     })
@@ -41,7 +45,20 @@ export default function App() {
 
   useEffect(() => { void loadEvents() }, [loadEvents])
 
-  const name = 'Anna'
+  const name = user?.fullName?.trim().split(/\s+/)[0] ?? ''
+  const needsName = Boolean(user && !user.fullName?.trim())
+
+  const saveName = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const fullName = nameInput.trim().replace(/\s+/g, ' ')
+    if (!supabase || !user || !fullName) return
+    setNameSaving(true)
+    setNameError('')
+    const { data, error } = await supabase.auth.updateUser({ data: { full_name: fullName } })
+    if (error) setNameError('Não conseguimos salvar seu nome. Tente novamente.')
+    else setUser({ id: data.user.id, email: data.user.email, fullName })
+    setNameSaving(false)
+  }
   const today = events.filter((event) => isTodayInBahia(event.starts_at))
   const upcoming = events.filter((event) => new Date(event.starts_at).getTime() > Date.now() && !event.is_completed).slice(0, 3)
   const openNew = () => { setEditing(null); setDialogOpen(true) }
@@ -89,7 +106,7 @@ export default function App() {
       {upcoming.length > 0 && <section className="upcoming-section"><div className="section-title-row"><div><span className="section-kicker">UM OLHAR ADIANTE</span><h2>Vem por aí</h2></div><span className="upcoming-flower">✿</span></div><div className="upcoming-list">{upcoming.map((event) => <div className="upcoming-item" key={event.id}><div className="upcoming-date"><strong>{formatBahiaDate(event.starts_at, { day: '2-digit' })}</strong><span>{formatBahiaDate(event.starts_at, { month: 'short' }).replace('.', '')}</span></div><div className={`event-color-dot category-${event.category}`} /><div className="upcoming-info"><strong>{event.title}</strong><span>{formatBahiaDate(event.starts_at, { weekday: 'long' })} · {formatBahiaTime(event.starts_at)}</span></div><button className="icon-button" aria-label={`Editar ${event.title}`} onClick={() => { setEditing(event); setDialogOpen(true) }}>···</button></div>)}</div></section>}
       <div className="gentle-note"><span>♡</span> Você não precisa fazer tudo de uma vez. Só o próximo passo.</div>
     </main><nav className="mobile-nav" aria-label="Navegação principal"><button className="nav-item active"><CalendarHeart size={19} /><span>Hoje</span></button><button className="nav-item" onClick={openNew}><Plus size={19} /><span>Adicionar</span></button><button className="nav-item" onClick={() => setToast('A visualização de calendário chega na próxima fase!')}><CalendarDays size={19} /><span>Calendário</span></button><button className="nav-item" onClick={() => setToast(`Conta: ${user.email ?? ''}`)}><CircleUserRound size={19} /><span>Conta</span></button></nav>
-    {dialogOpen && <EventDialog event={editing} onClose={() => setDialogOpen(false)} onSave={saveEvent} />}{toast && <div className="toast"><Check size={16} />{toast}</div>}</div>
+    {dialogOpen && <EventDialog event={editing} onClose={() => setDialogOpen(false)} onSave={saveEvent} />}{needsName && <div className="dialog-backdrop"><section className="event-dialog" role="dialog" aria-modal="true" aria-labelledby="name-dialog-title"><div className="dialog-heading"><div><span className="form-kicker">UM POUCO SOBRE VOCÊ</span><h2 id="name-dialog-title">Como podemos te chamar?</h2></div></div><p className="form-intro">Seu nome aparece na sua agenda e deixa tudo mais pessoal.</p><form className="event-form" onSubmit={saveName}><label className="field-label" htmlFor="profile-name">Seu nome</label><input id="profile-name" className="text-input" autoFocus autoComplete="name" maxLength={80} required placeholder="Ex.: Maria Clara" value={nameInput} onChange={(event) => setNameInput(event.target.value)} />{nameError && <div className="notice error-notice">{nameError}</div>}<div className="dialog-actions"><button className="primary-button" type="submit" disabled={nameSaving || !nameInput.trim()}>{nameSaving ? 'Salvando…' : 'Continuar'}</button></div></form></section></div>}{toast && <div className="toast"><Check size={16} />{toast}</div>}</div>
 }
 
 function EventRow({ event, onToggle, onEdit, onDelete }: { event: CalendarEvent; onToggle: () => void; onEdit: () => void; onDelete: () => void }) {
