@@ -1,4 +1,5 @@
-export type EventCategory = 'trabalho' | 'saude' | 'estudos' | 'pessoal' | 'compromissos'
+// The database stores categories as text, so accounts can use their own labels.
+export type EventCategory = string
 export type Recurrence = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'
 
 export type CalendarEvent = {

@@ -2,13 +2,9 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { bahiaInputToIso, bahiaInputValue } from '../lib/dates'
 import type { CalendarEvent, EventCategory, EventInput, Recurrence } from '../types'
+import type { CategoryOption } from './CategoryFilters'
 
-type Props = { event: CalendarEvent | null; onClose: () => void; onSave: (input: EventInput) => Promise<void> }
-const categories: { value: EventCategory; label: string }[] = [
-  { value: 'pessoal', label: 'Pessoal' }, { value: 'trabalho', label: 'Trabalho' },
-  { value: 'saude', label: 'Saúde' }, { value: 'estudos', label: 'Estudos' },
-  { value: 'compromissos', label: 'Compromissos' },
-]
+type Props = { event: CalendarEvent | null; categories: CategoryOption[]; onClose: () => void; onSave: (input: EventInput) => Promise<void> }
 const recurrence: { value: Recurrence; label: string }[] = [
   { value: 'none', label: 'Não se repete' }, { value: 'daily', label: 'Todos os dias' },
   { value: 'weekly', label: 'Toda semana' }, { value: 'monthly', label: 'Todo mês' }, { value: 'yearly', label: 'Todo ano' },
@@ -20,7 +16,7 @@ function defaultDate() {
   return bahiaInputValue(date)
 }
 
-export default function EventDialog({ event, onClose, onSave }: Props) {
+export default function EventDialog({ event, categories, onClose, onSave }: Props) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState<EventCategory>('pessoal')
