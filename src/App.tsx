@@ -14,6 +14,7 @@ export default function App() {
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [loadingEvents, setLoadingEvents] = useState(false)
   const [loadError, setLoadError] = useState('')
+  const [saveStatus, setSaveStatus] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<CalendarEvent | null>(null)
   const [toast, setToast] = useState('')
@@ -33,17 +34,53 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
+  useEffect(() => {
+    const userId = user?.id
+    if (!supabase || !userId) return
+    void supabase.from('user_settings').upsert(
+      { user_id: userId },
+      { onConflict: 'user_id', ignoreDuplicates: true },
+    ).then(({ error }) => {
+      if (error) setToast('Não foi possível sincronizar suas configurações agora.')
+    })
+  }, [user?.id])
+
   const loadEvents = useCallback(async () => {
     if (!supabase || !user) return
     setLoadingEvents(true)
     setLoadError('')
-    const { data, error } = await supabase.from('events').select('*').order('starts_at', { ascending: true }).limit(100)
-    if (error) setLoadError(error.message)
-    else setEvents((data ?? []) as CalendarEvent[])
-    setLoadingEvents(false)
+    setSaveStatus('loading')
+    try {
+      const { data, error } = await supabase.from('events').select('*').order('starts_at', { ascending: true }).limit(100)
+      if (error) throw error
+      setEvents((data ?? []) as CalendarEvent[])
+      setSaveStatus('saved')
+    } catch {
+      setLoadError('Não foi possível carregar seus compromissos. Confira sua conexão e tente novamente.')
+      setSaveStatus('error')
+    } finally {
+      setLoadingEvents(false)
+    }
   }, [user])
 
   useEffect(() => { void loadEvents() }, [loadEvents])
+
+  useEffect(() => {
+    const handleOffline = () => {
+      setSaveStatus('error')
+      setToast('Você está sem conexão. Suas alterações não foram sincronizadas.')
+    }
+    const handleOnline = () => {
+      setToast('Conexão restaurada. Atualizando sua agenda…')
+      void loadEvents()
+    }
+    window.addEventListener('offline', handleOffline)
+    window.addEventListener('online', handleOnline)
+    return () => {
+      window.removeEventListener('offline', handleOffline)
+      window.removeEventListener('online', handleOnline)
+    }
+  }, [loadEvents])
 
   const name = user?.fullName?.trim().split(/\s+/)[0] ?? ''
   const needsName = Boolean(user && !user.fullName?.trim())
@@ -65,26 +102,49 @@ export default function App() {
 
   const saveEvent = async (input: EventInput) => {
     if (!supabase || !user) throw new Error('Entre na sua conta para guardar um compromisso.')
-    const result = editing
-      ? await supabase.from('events').update(input).eq('id', editing.id).select().single()
-      : await supabase.from('events').insert({ ...input, user_id: user.id }).select().single()
-    if (result.error) throw result.error
-    await loadEvents()
-    setToast(editing ? 'Seu compromisso foi atualizado.' : 'Compromisso guardado com carinho.')
+    setSaveStatus('saving')
+    try {
+      const result = editing
+        ? await supabase.from('events').update(input).eq('id', editing.id).select().single()
+        : await supabase.from('events').insert({ ...input, user_id: user.id }).select().single()
+      if (result.error) throw result.error
+      setSaveStatus('saved')
+      await loadEvents()
+      setToast(editing ? 'Seu compromisso foi atualizado.' : 'Compromisso guardado com carinho.')
+    } catch {
+      setSaveStatus('error')
+      throw new Error('Não foi possível guardar o compromisso. Confira sua conexão e tente novamente.')
+    }
   }
 
   const toggleComplete = async (event: CalendarEvent) => {
     if (!supabase) return
-    const { error } = await supabase.from('events').update({ is_completed: !event.is_completed }).eq('id', event.id)
-    if (error) setToast('Não foi possível atualizar. Tente novamente.')
-    else { await loadEvents(); setToast(event.is_completed ? 'Compromisso reaberto.' : 'Mais uma coisa resolvida. Muito bem!') }
+    setSaveStatus('saving')
+    try {
+      const { error } = await supabase.from('events').update({ is_completed: !event.is_completed }).eq('id', event.id)
+      if (error) throw error
+      setSaveStatus('saved')
+      await loadEvents()
+      setToast(event.is_completed ? 'Compromisso reaberto.' : 'Mais uma coisa resolvida. Muito bem!')
+    } catch {
+      setSaveStatus('error')
+      setToast('Não foi possível atualizar. Confira sua conexão e tente novamente.')
+    }
   }
 
   const deleteEvent = async (event: CalendarEvent) => {
     if (!supabase || !window.confirm(`Excluir “${event.title}” da agenda?`)) return
-    const { error } = await supabase.from('events').delete().eq('id', event.id)
-    if (error) setToast('Não foi possível excluir. Tente novamente.')
-    else { await loadEvents(); setToast('Compromisso removido da agenda.') }
+    setSaveStatus('saving')
+    try {
+      const { error } = await supabase.from('events').delete().eq('id', event.id)
+      if (error) throw error
+      setSaveStatus('saved')
+      await loadEvents()
+      setToast('Compromisso removido da agenda.')
+    } catch {
+      setSaveStatus('error')
+      setToast('Não foi possível excluir. Confira sua conexão e tente novamente.')
+    }
   }
 
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(''), 3200); return () => window.clearTimeout(timer) }, [toast])
@@ -99,7 +159,7 @@ export default function App() {
 
   return <div className="app-shell"><header className="topbar"><a className="brand" href="#inicio" aria-label="Planna, início"><span className="brand-mark"><CalendarHeart size={19} /></span> planna</a><div className="topbar-right"><button className="user-pill" type="button" title={user.email}><span className="user-avatar">{name.charAt(0)}</span><span>{name}</span><ChevronDown size={14} /></button><button className="icon-button logout-button" type="button" aria-label="Sair da conta" title="Sair" onClick={() => void supabase?.auth.signOut()}><LogOut size={17} /></button></div></header>
     <main className="dashboard" id="inicio"><div className="welcome-row"><div><span className="date-overline">{dateHeading}</span><h1>{greeting}, {name}<span className="wave"> ✿</span></h1><p>Vamos deixar seu dia mais leve?</p></div><div className="welcome-sparkle"><Sparkles size={19} /></div></div>
-      <section className="day-card"><div className="day-card-head"><div><span className="section-kicker">SUA AGENDA</span><h2>Hoje, com carinho</h2></div><span className="today-count">{today.length} {today.length === 1 ? 'lembrete' : 'lembretes'}</span></div>
+      <section className="day-card"><div className="day-card-head"><div><span className="section-kicker">SUA AGENDA</span><h2>Hoje, com carinho</h2></div><div className="day-card-actions"><span className="today-count">{today.length} {today.length === 1 ? 'lembrete' : 'lembretes'}</span><span className={`save-status save-status-${saveStatus}`} role="status" aria-live="polite"><span className="save-status-dot" />{saveStatus === 'saving' ? 'Salvando…' : saveStatus === 'loading' ? 'Carregando…' : saveStatus === 'error' ? 'Não sincronizado' : 'Salvo'}</span></div></div>
         {loadingEvents ? <div className="empty-state"><div className="loading-spinner" />Carregando sua agenda…</div> : loadError ? <div className="notice error-notice">Não foi possível carregar seus compromissos: {loadError}<button className="text-button strong-link" onClick={() => void loadEvents()}>Tentar de novo</button></div> : today.length ? <div className="event-list">{today.map((event) => <EventRow key={event.id} event={event} onToggle={() => void toggleComplete(event)} onEdit={() => { setEditing(event); setDialogOpen(true) }} onDelete={() => void deleteEvent(event)} />)}</div> : <div className="empty-state"><div className="empty-illustration"><CalendarDays size={26} /><span>✿</span></div><strong>Seu dia está com espaço para respirar</strong><span>Nenhum compromisso por aqui. Quer adicionar algo?</span><button className="soft-button" onClick={openNew}><Plus size={16} />Adicionar lembrete</button></div>}
         <button className="add-event-button" onClick={openNew}><span className="add-circle"><Plus size={20} /></span><span><strong>Adicionar compromisso</strong><small>Uma ideia, um plano, um lembrete</small></span><span className="add-arrow">→</span></button>
       </section>
@@ -112,4 +172,5 @@ export default function App() {
 function EventRow({ event, onToggle, onEdit, onDelete }: { event: CalendarEvent; onToggle: () => void; onEdit: () => void; onDelete: () => void }) {
   return <article className={`event-row ${event.is_completed ? 'is-completed' : ''}`}><button className={`complete-button ${event.is_completed ? 'checked' : ''}`} type="button" aria-label={event.is_completed ? 'Marcar como pendente' : 'Marcar como concluído'} onClick={onToggle}>{event.is_completed && <Check size={14} strokeWidth={3} />}</button><div className={`event-color-dot category-${event.category}`} /><div className="event-main"><div className="event-title-line"><strong>{event.title}</strong><span className={`category-tag category-${event.category}`}>{categoryLabels[event.category] ?? 'Pessoal'}</span></div><div className="event-meta"><Clock3 size={13} />{formatBahiaTime(event.starts_at)}{event.description && <><span className="meta-separator">·</span><span className="event-description">{event.description}</span></>}</div></div><div className="row-actions"><button className="icon-button" aria-label={`Editar ${event.title}`} onClick={onEdit}>✎</button><button className="icon-button delete-action" aria-label={`Excluir ${event.title}`} onClick={onDelete}><Trash2 size={15} /></button></div></article>
 }
+
 
