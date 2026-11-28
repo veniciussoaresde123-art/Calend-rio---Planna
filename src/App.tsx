@@ -5,7 +5,7 @@ import CategoryFilters, { type CategoryOption, type SavedCategoryFilter } from '
 import EventDialog from './components/EventDialog'
 import { formatBahiaDate, formatBahiaTime, isTodayInBahia } from './lib/dates'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
-import type { CalendarEvent, EventInput } from './types'
+import type { AIInterpretation, CalendarEvent, EventInput } from './types'
 
 const categoryLabels: Record<string, string> = { pessoal: 'Pessoal', trabalho: 'Trabalho', saude: 'Saúde', estudos: 'Estudos', compromissos: 'Compromissos' }
 const builtInCategories: CategoryOption[] = [
@@ -166,6 +166,28 @@ export default function App() {
     }
   }
 
+  const interpretEvent = async (text: string): Promise<AIInterpretation> => {
+    if (!supabase || !user) throw new Error('Entre na sua conta para usar a organização com IA.')
+    const { data, error } = await supabase.functions.invoke('interpret-task', {
+      body: {
+        text,
+        referenceAt: new Date().toISOString(),
+        timezone: 'America/Bahia',
+        categories: categories.map(({ value, label }) => ({ value, label })),
+      },
+    })
+    if (error) {
+      const response = (error as { context?: Response }).context
+      const payload = await response?.clone().json().catch(() => null) as { code?: string; message?: string } | null
+      if (payload?.code === 'ai_not_configured') throw new Error('A IA ainda precisa ser configurada. Adicione GEMINI_API_KEY em Supabase → Edge Functions → Secrets.')
+      if (payload?.code === 'rate_limited') throw new Error('Você chegou ao limite de 20 interpretações por hora. Tente novamente mais tarde.')
+      throw new Error(payload?.message ?? 'Não foi possível consultar a IA. Confira sua conexão e tente novamente.')
+    }
+    if (data?.code === 'ai_not_configured') throw new Error('A IA ainda precisa ser configurada. Adicione GEMINI_API_KEY em Supabase → Edge Functions → Secrets.')
+    if (data?.code === 'rate_limited') throw new Error('Você chegou ao limite de 20 interpretações por hora. Tente novamente mais tarde.')
+    return data as AIInterpretation
+  }
+
   const toggleComplete = async (event: CalendarEvent) => {
     if (!supabase) return
     setSaveStatus('saving')
@@ -216,7 +238,7 @@ export default function App() {
       {upcoming.length > 0 && <section className="upcoming-section"><div className="section-title-row"><div><span className="section-kicker">UM OLHAR ADIANTE</span><h2>Vem por aí</h2></div><span className="upcoming-flower">✿</span></div><div className="upcoming-list">{upcoming.map((event) => <div className="upcoming-item" key={event.id}><div className="upcoming-date"><strong>{formatBahiaDate(event.starts_at, { day: '2-digit' })}</strong><span>{formatBahiaDate(event.starts_at, { month: 'short' }).replace('.', '')}</span></div><div className={`event-color-dot category-${event.category}`} /><div className="upcoming-info"><strong>{event.title}</strong><span>{formatBahiaDate(event.starts_at, { weekday: 'long' })} · {formatBahiaTime(event.starts_at)}</span></div><button className="icon-button" aria-label={`Editar ${event.title}`} onClick={() => { setEditing(event); setDialogOpen(true) }}>···</button></div>)}</div></section>}
       <div className="gentle-note"><span>♡</span> Você não precisa fazer tudo de uma vez. Só o próximo passo.</div>
     </main><nav className="mobile-nav" aria-label="Navegação principal"><button className="nav-item active"><CalendarHeart size={19} /><span>Hoje</span></button><button className="nav-item" onClick={openNew}><Plus size={19} /><span>Adicionar</span></button><button className="nav-item" onClick={() => setToast('A visualização de calendário chega na próxima fase!')}><CalendarDays size={19} /><span>Calendário</span></button><button className="nav-item" onClick={() => setToast(`Conta: ${user.email ?? ''}`)}><CircleUserRound size={19} /><span>Conta</span></button></nav>
-    {dialogOpen && <EventDialog event={editing} categories={categories} onClose={() => setDialogOpen(false)} onSave={saveEvent} />}{needsName && <div className="dialog-backdrop"><section className="event-dialog" role="dialog" aria-modal="true" aria-labelledby="name-dialog-title"><div className="dialog-heading"><div><span className="form-kicker">UM POUCO SOBRE VOCÊ</span><h2 id="name-dialog-title">Como podemos te chamar?</h2></div></div><p className="form-intro">Seu nome aparece na sua agenda e deixa tudo mais pessoal.</p><form className="event-form" onSubmit={saveName}><label className="field-label" htmlFor="profile-name">Seu nome</label><input id="profile-name" className="text-input" autoFocus autoComplete="name" maxLength={80} required placeholder="Ex.: Maria Clara" value={nameInput} onChange={(event) => setNameInput(event.target.value)} />{nameError && <div className="notice error-notice">{nameError}</div>}<div className="dialog-actions"><button className="primary-button" type="submit" disabled={nameSaving || !nameInput.trim()}>{nameSaving ? 'Salvando…' : 'Continuar'}</button></div></form></section></div>}{toast && <div className="toast"><Check size={16} />{toast}</div>}</div>
+    {dialogOpen && <EventDialog event={editing} categories={categories} onClose={() => setDialogOpen(false)} onSave={saveEvent} onInterpret={interpretEvent} />}{needsName && <div className="dialog-backdrop"><section className="event-dialog" role="dialog" aria-modal="true" aria-labelledby="name-dialog-title"><div className="dialog-heading"><div><span className="form-kicker">UM POUCO SOBRE VOCÊ</span><h2 id="name-dialog-title">Como podemos te chamar?</h2></div></div><p className="form-intro">Seu nome aparece na sua agenda e deixa tudo mais pessoal.</p><form className="event-form" onSubmit={saveName}><label className="field-label" htmlFor="profile-name">Seu nome</label><input id="profile-name" className="text-input" autoFocus autoComplete="name" maxLength={80} required placeholder="Ex.: Maria Clara" value={nameInput} onChange={(event) => setNameInput(event.target.value)} />{nameError && <div className="notice error-notice">{nameError}</div>}<div className="dialog-actions"><button className="primary-button" type="submit" disabled={nameSaving || !nameInput.trim()}>{nameSaving ? 'Salvando…' : 'Continuar'}</button></div></form></section></div>}{toast && <div className="toast"><Check size={16} />{toast}</div>}</div>
 }
 
 function EventRow({ event, categories, onToggle, onEdit, onDelete }: { event: CalendarEvent; categories: CategoryOption[]; onToggle: () => void; onEdit: () => void; onDelete: () => void }) {

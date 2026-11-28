@@ -1,6 +1,14 @@
 // The database stores categories as text, so accounts can use their own labels.
 export type EventCategory = string
 export type Recurrence = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type AIInterpretation = {
+  title: string
+  date: string
+  time: string
+  category: EventCategory
+  recurrence: Recurrence
+  clarification: string
+}
 
 export type CalendarEvent = {
   id: string
