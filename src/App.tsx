@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { CalendarDays, CalendarHeart, Check, ChevronDown, CircleUserRound, Clock3, LogOut, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { CalendarDays, CalendarHeart, Check, ChevronDown, CircleUserRound, Clock3, LogOut, Mic, Plus, Sparkles, Trash2 } from 'lucide-react'
 import AuthScreen from './components/AuthScreen'
 import CategoryFilters, { type CategoryOption, type SavedCategoryFilter } from './components/CategoryFilters'
 import EventDialog from './components/EventDialog'
@@ -12,6 +12,23 @@ const builtInCategories: CategoryOption[] = [
   { value: 'pessoal', label: 'Pessoal' }, { value: 'trabalho', label: 'Trabalho' }, { value: 'saude', label: 'Saúde' },
   { value: 'estudos', label: 'Estudos' }, { value: 'compromissos', label: 'Compromissos' },
 ]
+
+type SpeechRecognitionResult = { isFinal: boolean; 0: { transcript: string } }
+type SpeechRecognitionEvent = { results: ArrayLike<SpeechRecognitionResult> }
+type SpeechRecognitionErrorEvent = { error: string }
+type SpeechRecognitionController = {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  onresult: ((event: SpeechRecognitionEvent) => void) | null
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
+  abort: () => void
+}
+type SpeechRecognitionConstructor = new () => SpeechRecognitionController
+type SpeechWindow = Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor }
 
 export default function App() {
   const [user, setUser] = useState<{ id: string; email?: string; fullName?: string } | null>(null)
@@ -30,6 +47,14 @@ export default function App() {
   const [nameInput, setNameInput] = useState('')
   const [nameSaving, setNameSaving] = useState(false)
   const [nameError, setNameError] = useState('')
+  const [isListening, setIsListening] = useState(false)
+  const [voiceText, setVoiceText] = useState('')
+  const [voiceTranscript, setVoiceTranscript] = useState('')
+  const [voiceError, setVoiceError] = useState('')
+  const recognitionRef = useRef<SpeechRecognitionController | null>(null)
+  const finalTranscriptRef = useRef('')
+  const recognitionFailedRef = useRef(false)
+  const discardTranscriptRef = useRef(false)
 
   useEffect(() => {
     if (!supabase) { setAuthReady(true); return }
@@ -147,7 +172,99 @@ export default function App() {
   }
   const today = events.filter((event) => isTodayInBahia(event.starts_at) && (!activeCategories || activeCategories.includes(event.category)))
   const upcoming = events.filter((event) => new Date(event.starts_at).getTime() > Date.now() && !event.is_completed && (!activeCategories || activeCategories.includes(event.category))).slice(0, 3)
-  const openNew = () => { setEditing(null); setDialogOpen(true) }
+  const openNew = () => {
+    recognitionRef.current?.abort()
+    recognitionRef.current = null
+    discardTranscriptRef.current = true
+    setIsListening(false)
+    setVoiceText('')
+    setVoiceTranscript('')
+    setVoiceError('')
+    setEditing(null)
+    setDialogOpen(true)
+  }
+
+  const startVoice = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      return
+    }
+    const SpeechRecognition = (window as SpeechWindow).SpeechRecognition ?? (window as SpeechWindow).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setVoiceError('Este navegador não oferece transcrição por voz. Você pode digitar sua frase no campo acima.')
+      return
+    }
+    setVoiceError('')
+    setVoiceText('')
+    setVoiceTranscript('')
+    finalTranscriptRef.current = ''
+    recognitionFailedRef.current = false
+    discardTranscriptRef.current = false
+    try {
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'pt-BR'
+      recognition.continuous = false
+      recognition.interimResults = true
+      recognition.onresult = (event) => {
+        const finalParts: string[] = []
+        const interimParts: string[] = []
+        for (let index = 0; index < event.results.length; index += 1) {
+          const result = event.results[index]
+          const part = result?.[0]?.transcript?.trim()
+          if (!part) continue
+          if (result.isFinal) finalParts.push(part)
+          else interimParts.push(part)
+        }
+        finalTranscriptRef.current = finalParts.join(' ').replace(/\s+/g, ' ').trim()
+        setVoiceText([...finalParts, ...interimParts].join(' ').replace(/\s+/g, ' ').trim())
+      }
+      recognition.onerror = (event) => {
+        if (discardTranscriptRef.current) return
+        recognitionFailedRef.current = true
+        const messages: Record<string, string> = {
+          'not-allowed': 'A permissão do microfone foi negada. Libere o microfone nas configurações do navegador ou digite sua frase.',
+          'service-not-allowed': 'O serviço de voz não está disponível. Você pode digitar sua frase no campo acima.',
+          'no-speech': 'Não detectei fala. Tente novamente em um lugar mais silencioso ou digite sua frase.',
+          network: 'A transcrição por voz não conseguiu se conectar. Confira a internet ou digite sua frase.',
+          'audio-capture': 'Não encontrei um microfone disponível. Confira o dispositivo ou digite sua frase.',
+        }
+        setVoiceError(messages[event.error] ?? 'Não foi possível transcrever sua fala. Tente novamente ou digite sua frase.')
+        setIsListening(false)
+      }
+      recognition.onend = () => {
+        recognitionRef.current = null
+        setIsListening(false)
+        if (discardTranscriptRef.current || recognitionFailedRef.current) return
+        const transcript = finalTranscriptRef.current
+        if (!transcript) {
+          setVoiceError('Não detectei fala. Toque no microfone e tente novamente, ou digite sua frase.')
+          return
+        }
+        setVoiceText(transcript)
+        setVoiceTranscript(transcript)
+      }
+      recognitionRef.current = recognition
+      recognition.start()
+      setIsListening(true)
+    } catch {
+      recognitionRef.current = null
+      setIsListening(false)
+      setVoiceError('Não consegui iniciar o microfone. Confira as permissões do navegador ou digite sua frase.')
+    }
+  }
+
+  const stopVoice = () => recognitionRef.current?.stop()
+  const closeDialog = () => {
+    discardTranscriptRef.current = true
+    recognitionRef.current?.abort()
+    recognitionRef.current = null
+    setIsListening(false)
+    setDialogOpen(false)
+  }
+  const openVoice = () => {
+    openNew()
+    startVoice()
+  }
 
   const saveEvent = async (input: EventInput) => {
     if (!supabase || !user) throw new Error('Entre na sua conta para guardar um compromisso.')
@@ -229,7 +346,7 @@ export default function App() {
   const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite'
 
   return <div className="app-shell"><header className="topbar"><a className="brand" href="#inicio" aria-label="Planna, início"><span className="brand-mark"><CalendarHeart size={19} /></span> planna</a><div className="topbar-right"><button className="user-pill" type="button" title={user.email}><span className="user-avatar">{name.charAt(0)}</span><span>{name}</span><ChevronDown size={14} /></button><button className="icon-button logout-button" type="button" aria-label="Sair da conta" title="Sair" onClick={() => void supabase?.auth.signOut()}><LogOut size={17} /></button></div></header>
-    <main className="dashboard" id="inicio"><div className="welcome-row"><div><span className="date-overline">{dateHeading}</span><h1>{greeting}, {name}<span className="wave"> ✿</span></h1><p>Vamos deixar seu dia mais leve?</p></div><div className="welcome-sparkle"><Sparkles size={19} /></div></div>
+    <main className="dashboard" id="inicio"><div className="welcome-row"><div><span className="date-overline">{dateHeading}</span><h1>{greeting}, {name}<span className="wave"> ✿</span></h1><p>Vamos deixar seu dia mais leve?</p></div><div className="welcome-actions"><button className="voice-home-button" type="button" onClick={openVoice} aria-label="Adicionar compromisso falando" title="Adicionar compromisso falando"><Mic size={22} /><span>Falar</span></button><div className="welcome-sparkle"><Sparkles size={19} /></div></div></div>
       <section className="day-card"><div className="day-card-head"><div><span className="section-kicker">SUA AGENDA</span><h2>Hoje, com carinho</h2></div><div className="day-card-actions"><span className="today-count">{today.length} {today.length === 1 ? 'lembrete' : 'lembretes'}</span><span className={`save-status save-status-${saveStatus}`} role="status" aria-live="polite"><span className="save-status-dot" />{saveStatus === 'saving' ? 'Salvando…' : saveStatus === 'loading' ? 'Carregando…' : saveStatus === 'error' ? 'Não sincronizado' : 'Salvo'}</span></div></div>
         <CategoryFilters categories={categories} activeCategories={activeCategories} savedFilters={savedFilters} onSelect={setActiveCategories} onAddCategory={addCategory} onSaveFilter={saveCategoryFilter} onDeleteFilter={deleteCategoryFilter} />
         {loadingEvents ? <div className="empty-state"><div className="loading-spinner" />Carregando sua agenda…</div> : loadError ? <div className="notice error-notice">Não foi possível carregar seus compromissos: {loadError}<button className="text-button strong-link" onClick={() => void loadEvents()}>Tentar de novo</button></div> : today.length ? <div className="event-list">{today.map((event) => <EventRow key={event.id} event={event} categories={categories} onToggle={() => void toggleComplete(event)} onEdit={() => { setEditing(event); setDialogOpen(true) }} onDelete={() => void deleteEvent(event)} />)}</div> : <div className="empty-state"><div className="empty-illustration"><CalendarDays size={26} /><span>✿</span></div><strong>{activeCategories ? 'Nenhum compromisso nesta categoria' : 'Seu dia está com espaço para respirar'}</strong><span>{activeCategories ? 'Tente outra categoria ou veja todos os compromissos.' : 'Nenhum compromisso por aqui. Quer adicionar algo?'}</span>{!activeCategories && <button className="soft-button" onClick={openNew}><Plus size={16} />Adicionar lembrete</button>}</div>}
@@ -238,12 +355,11 @@ export default function App() {
       {upcoming.length > 0 && <section className="upcoming-section"><div className="section-title-row"><div><span className="section-kicker">UM OLHAR ADIANTE</span><h2>Vem por aí</h2></div><span className="upcoming-flower">✿</span></div><div className="upcoming-list">{upcoming.map((event) => <div className="upcoming-item" key={event.id}><div className="upcoming-date"><strong>{formatBahiaDate(event.starts_at, { day: '2-digit' })}</strong><span>{formatBahiaDate(event.starts_at, { month: 'short' }).replace('.', '')}</span></div><div className={`event-color-dot category-${event.category}`} /><div className="upcoming-info"><strong>{event.title}</strong><span>{formatBahiaDate(event.starts_at, { weekday: 'long' })} · {formatBahiaTime(event.starts_at)}</span></div><button className="icon-button" aria-label={`Editar ${event.title}`} onClick={() => { setEditing(event); setDialogOpen(true) }}>···</button></div>)}</div></section>}
       <div className="gentle-note"><span>♡</span> Você não precisa fazer tudo de uma vez. Só o próximo passo.</div>
     </main><nav className="mobile-nav" aria-label="Navegação principal"><button className="nav-item active"><CalendarHeart size={19} /><span>Hoje</span></button><button className="nav-item" onClick={openNew}><Plus size={19} /><span>Adicionar</span></button><button className="nav-item" onClick={() => setToast('A visualização de calendário chega na próxima fase!')}><CalendarDays size={19} /><span>Calendário</span></button><button className="nav-item" onClick={() => setToast(`Conta: ${user.email ?? ''}`)}><CircleUserRound size={19} /><span>Conta</span></button></nav>
-    {dialogOpen && <EventDialog event={editing} categories={categories} onClose={() => setDialogOpen(false)} onSave={saveEvent} onInterpret={interpretEvent} />}{needsName && <div className="dialog-backdrop"><section className="event-dialog" role="dialog" aria-modal="true" aria-labelledby="name-dialog-title"><div className="dialog-heading"><div><span className="form-kicker">UM POUCO SOBRE VOCÊ</span><h2 id="name-dialog-title">Como podemos te chamar?</h2></div></div><p className="form-intro">Seu nome aparece na sua agenda e deixa tudo mais pessoal.</p><form className="event-form" onSubmit={saveName}><label className="field-label" htmlFor="profile-name">Seu nome</label><input id="profile-name" className="text-input" autoFocus autoComplete="name" maxLength={80} required placeholder="Ex.: Maria Clara" value={nameInput} onChange={(event) => setNameInput(event.target.value)} />{nameError && <div className="notice error-notice">{nameError}</div>}<div className="dialog-actions"><button className="primary-button" type="submit" disabled={nameSaving || !nameInput.trim()}>{nameSaving ? 'Salvando…' : 'Continuar'}</button></div></form></section></div>}{toast && <div className="toast"><Check size={16} />{toast}</div>}</div>
+    {dialogOpen && <EventDialog event={editing} categories={categories} onClose={closeDialog} onSave={saveEvent} onInterpret={interpretEvent} onStartVoice={startVoice} onStopVoice={stopVoice} isListening={isListening} voiceText={voiceText} voiceTranscript={voiceTranscript} voiceError={voiceError} />}{needsName && <div className="dialog-backdrop"><section className="event-dialog" role="dialog" aria-modal="true" aria-labelledby="name-dialog-title"><div className="dialog-heading"><div><span className="form-kicker">UM POUCO SOBRE VOCÊ</span><h2 id="name-dialog-title">Como podemos te chamar?</h2></div></div><p className="form-intro">Seu nome aparece na sua agenda e deixa tudo mais pessoal.</p><form className="event-form" onSubmit={saveName}><label className="field-label" htmlFor="profile-name">Seu nome</label><input id="profile-name" className="text-input" autoFocus autoComplete="name" maxLength={80} required placeholder="Ex.: Maria Clara" value={nameInput} onChange={(event) => setNameInput(event.target.value)} />{nameError && <div className="notice error-notice">{nameError}</div>}<div className="dialog-actions"><button className="primary-button" type="submit" disabled={nameSaving || !nameInput.trim()}>{nameSaving ? 'Salvando…' : 'Continuar'}</button></div></form></section></div>}{toast && <div className="toast"><Check size={16} />{toast}</div>}</div>
 }
 
 function EventRow({ event, categories, onToggle, onEdit, onDelete }: { event: CalendarEvent; categories: CategoryOption[]; onToggle: () => void; onEdit: () => void; onDelete: () => void }) {
   const categoryLabel = categories.find((item) => item.value === event.category)?.label ?? categoryLabels[event.category] ?? event.category
   return <article className={`event-row ${event.is_completed ? 'is-completed' : ''}`}><button className={`complete-button ${event.is_completed ? 'checked' : ''}`} type="button" aria-label={event.is_completed ? 'Marcar como pendente' : 'Marcar como concluído'} onClick={onToggle}>{event.is_completed && <Check size={14} strokeWidth={3} />}</button><div className={`event-color-dot category-${event.category}`} /><div className="event-main"><div className="event-title-line"><strong>{event.title}</strong><span className={`category-tag category-${event.category}`}>{categoryLabel}</span></div><div className="event-meta"><Clock3 size={13} />{formatBahiaTime(event.starts_at)}{event.description && <><span className="meta-separator">·</span><span className="event-description">{event.description}</span></>}</div></div><div className="row-actions"><button className="icon-button" aria-label={`Editar ${event.title}`} onClick={onEdit}>✎</button><button className="icon-button delete-action" aria-label={`Excluir ${event.title}`} onClick={onDelete}><Trash2 size={15} /></button></div></article>
 }
-
 
